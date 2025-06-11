@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  db:
+    image: ankane/pgvector
+    container_name: augment-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: augment_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/augument_data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      - augment-net
+
+volumes:
+  pgdata:
+
+networks:
+  augment-net:
