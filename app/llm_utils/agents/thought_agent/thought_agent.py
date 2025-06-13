@@ -1,5 +1,6 @@
 # Imports
 import asyncio
+import json
 from typing import TypedDict, Annotated, List, Dict, Any, operator, Optional
 from langgraph.graph import StateGraph, END, START
 from langgraph.graph.state import CompiledStateGraph
@@ -10,7 +11,7 @@ from sqlalchemy.orm import Session
 from psycopg_pool import AsyncConnectionPool
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-from tools import fetch_relevant_thoughts, get_thought_details
+from app.llm_utils.agents.thought_agent.tools import fetch_relevant_thoughts, get_thought_details
 
 
 from dotenv import load_dotenv
@@ -124,12 +125,7 @@ Think step by step and use tools when necessary to provide accurate answers.
 
 If you don't need any tools, provide a direct answer.
 
-You have two tools at your disposal:
-1. fetch_relevant_thoughts: This tool is used to fetch relevant thoughts that the user has posted.
-Since this is a RAG tool, you will have to curate a query that is big enough to fetch the most relevant thoughts. Generate a query of atleast 10 words.
 
-2. get_thought_details: This tool is used to get the details of a particular thought.
-This tool is used to get Full details of a particular thought.
 
 You can use these tools to answer the question.
 Always start your answer with "Bello"
@@ -160,7 +156,7 @@ Always start your answer with "Bello"
         }
         
         config = {"configurable": {
-            "thread_id":  f"{session_id}",
+            "thread_id":  f"{user_id}_{session_id}",
             "user_id": user_id,
             "session": db
             }}
@@ -175,6 +171,73 @@ Always start your answer with "Bello"
         
         return "Couldn't find the answer you were looking for"
     
+    async def get_stream_response(self, question: str, session_id: str, user_id: Optional[str] = None, db: Optional[Session] = None) -> str:
+        
+        if self.graph is None:
+            self.graph = await self._build_graph()
+            
+        initial_state = {
+            "messages": [HumanMessage(content=question)]
+        }
+        
+        config = {"configurable": {
+            "thread_id": f"{user_id}_{session_id}",
+            "user_id": user_id,
+            "session": db
+            }}
+        
+        draft_tool_calls = []
+        tool_call_details = {}
+        draft_tool_calls_index = -1
+        
+        try:
+            async for chunk, metadata in self.graph.astream(input=initial_state, config=config, stream_mode="messages"):
+                if chunk.type == "tool":
+                    if chunk.tool_call_id:
+                        full_tool_call = tool_call_details[chunk.tool_call_id]
+                        full_tool_call['result'] = chunk.content
+                        yield '9:{{"toolCallId":"{id}", "toolName":"{name}", "args":{args}, "result":{result}}}\n'.format(
+                            id=full_tool_call["id"], 
+                            name=full_tool_call["name"], 
+                            args=full_tool_call["arguments"], 
+                            result=json.dumps(full_tool_call["result"]))
+                        
+                elif chunk.type == "AIMessageChunk":
+                    if chunk.response_metadata:
+                        if chunk.response_metadata['finish_reason'] == "stop":
+                            yield 'e:{{"finishReason":"{reason}","isContinued":false}}\n'.format(reason="stop")
+                            return                        
+                        if chunk.response_metadata['finish_reason'] == 'tool_calls':
+                            for tool_call in draft_tool_calls:
+                                tool_call_details[tool_call['id']] = tool_call
+                                yield '9:{{"toolCallId":"{id}", "toolName":"{name}", "args":{args}}}\n'.format(
+                                    id=tool_call["id"], 
+                                    name=tool_call["name"], 
+                                    args=tool_call["arguments"]
+                                )
+                    
+                    if chunk.tool_call_chunks:
+                        for tool_call in chunk.tool_call_chunks:
+                            id = tool_call['id']
+                            name = tool_call['name']
+                            arguments = tool_call['args']
+                            
+                            if (id is None):
+                                draft_tool_calls[draft_tool_calls_index]["arguments"] += arguments
+                            else:
+                                draft_tool_calls_index += 1
+                                draft_tool_calls.append(
+                                    {"id": id, "name": name, "arguments": ""}
+                                )
+                    else:
+                        print(chunk.content)
+                        # await asyncio.sleep(1)
+                        yield '0:{text}\n'.format(text=json.dumps(chunk.content))
+                        
+        except Exception as e:
+            print(f"Error: {e}")
+            yield 'd:Error: {e}\n'.format(e=e)
+        
 
 async def main():
     db = SessionLocal()

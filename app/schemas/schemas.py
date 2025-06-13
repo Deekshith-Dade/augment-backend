@@ -17,3 +17,13 @@ class VisualizeThought(BaseModel):
 
 class VisualizeThoughtResponse(BaseModel):
     thoughts: list[VisualizeThought]
+    
+class ThoughtResponseFull(BaseModel):
+    id: str
+    title: str
+    text_content: str
+    image_url: Optional[str]
+    audio_url: Optional[str]
+    full_content: str
+    created_at: str
+    updated_at: str

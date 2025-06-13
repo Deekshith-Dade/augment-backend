@@ -42,7 +42,8 @@ class Thought(Base):
     full_content = Column(Text, nullable=False)
     meta = Column(JSONB, nullable=True)
     created_at = Column(DateTime, default=datetime.now(timezone.utc))
-
+    updated_at = Column(DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
+    
     user = relationship("User", back_populates="thoughts")
     tags = relationship("Tag", secondary="thought_tags", back_populates="thoughts")
 

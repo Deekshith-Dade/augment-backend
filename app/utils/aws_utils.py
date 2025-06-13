@@ -31,3 +31,13 @@ def get_file_from_s3(filepath: str) -> bytes:
     except (BotoCoreError, NoCredentialsError) as e:
         logger.exception("S3 download failed")
         raise RuntimeError("Failed to download from S3") from e
+
+def generate_presigned_url(filepath: str) -> str:
+    if "amazonaws.com/" in filepath:
+        filepath = filepath.split("amazonaws.com/")[1]
+    try:
+        response = s3_client.generate_presigned_url('get_object', Params={'Bucket': BUCKET_NAME, 'Key': filepath}, ExpiresIn=3600)
+        return response
+    except (BotoCoreError, NoCredentialsError) as e:
+        logger.exception("S3 presigned url generation failed")
+        raise RuntimeError("Failed to generate presigned url") from e
