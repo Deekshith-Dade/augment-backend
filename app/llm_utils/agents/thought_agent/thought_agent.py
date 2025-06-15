@@ -1,7 +1,11 @@
 # Imports
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")))
+
 import asyncio
 import json
-from typing import TypedDict, Annotated, List, Dict, Any, operator, Optional
+from typing import TypedDict, Annotated, List, Dict, Any, operator, Optional, AsyncGenerator
 from langgraph.graph import StateGraph, END, START
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
@@ -10,9 +14,11 @@ from langchain_openai import ChatOpenAI
 from sqlalchemy.orm import Session
 from psycopg_pool import AsyncConnectionPool
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from asgiref.sync import sync_to_async
+from langgraph.types import StateSnapshot
 
 from app.llm_utils.agents.thought_agent.tools import fetch_relevant_thoughts, get_thought_details
-
+from app.utils.messages import process_messagse_aisdk
 
 from dotenv import load_dotenv
 import os
@@ -75,32 +81,38 @@ class ReactAgent:
         if self.graph is not None:
             return self.graph
             
-        workflow = StateGraph(AgentState)
+        try:
+            workflow = StateGraph(AgentState)
         
-        workflow.add_node("agent", self._call_model)
-        workflow.add_node("tools", self.tool_node)
+            workflow.add_node("agent", self._call_model)
+            workflow.add_node("tools", self.tool_node)
+            
+            workflow.add_edge(START, "agent")
+            workflow.add_conditional_edges(
+                "agent",
+                self._should_continue,
+                {
+                    "continue": "tools",
+                    "end": END
+                }
+            )
+            workflow.add_edge("tools", "agent")
+            workflow.add_edge("agent", END)
+            
+            connection_pool = await self._get_connection_pool()
+            if connection_pool:
+                checkpointer = AsyncPostgresSaver(connection_pool)
+                await checkpointer.setup()
+            else:
+                checkpointer = None
+                raise Exception("connection pool initialization failed")
+            
+            self.graph = workflow.compile(checkpointer=checkpointer, name=f"Thoughts Agent")
+        except Exception as e:
+            print(f"Error building graph: {e}")
+            raise e
         
-        workflow.add_edge(START, "agent")
-        workflow.add_conditional_edges(
-            "agent",
-            self._should_continue,
-            {
-                "continue": "tools",
-                "end": END
-            }
-        )
-        workflow.add_edge("tools", "agent")
-        
-        connection_pool = await self._get_connection_pool()
-        if connection_pool:
-            checkpointer = AsyncPostgresSaver(connection_pool)
-            await checkpointer.setup()
-        else:
-            checkpointer = None
-            raise Exception("connection pool initialization failed")
-        
-        self._grpah = workflow.compile(checkpointer=checkpointer, name=f"Thoughts Agent")
-        return self._grpah
+        return self.graph
     
     def _prepare_messages(self, system_prompt: str, messages: List[BaseMessage]) -> List[BaseMessage]:
         """Prepare the messages for the model"""
@@ -111,7 +123,7 @@ class ReactAgent:
             token_counter=self.llm,
             max_tokens=3000,
             start_on="human",
-            include_system=False
+            include_system=False,
         )
         
         return [{"role": "system", "content": system_prompt}] + trimmed_messages
@@ -124,18 +136,23 @@ When you need to use a tool, simply call it with the appropriate function call.
 Think step by step and use tools when necessary to provide accurate answers.
 
 If you don't need any tools, provide a direct answer.
-
-
-
 You can use these tools to answer the question.
+
+
+ALWAYS, If you are using a thought, you should cite it in the format [Number](thought://thought_id), I can use this info to make user experience better.
+For example if the thought's title is "The future of AI" and the id is "23523523fadgadgasedga" and another thought's id is "23523523fadgadgasedga", you should cite it as [1](thought://23523523fadgadgasedga) and [2](thought://23523523fadgadgasedga).
 Always start your answer with "Bello"
 """
+
         full_messages = self._prepare_messages(system_message, messages)
-        
-        response = self.llm_with_tools.invoke(full_messages)
+        try:
+            response = await self.llm_with_tools.ainvoke(full_messages)
+        except Exception as e:
+            print(e)
+            return {"messages": [AIMessage(content="I'm sorry, I'm having trouble answering your question. Please try again.")]}
         
         return {"messages": [response]}
-    
+        
     def _should_continue(self, state: AgentState) -> str:
         """A condition edge to determine wether to continue with tools or end."""
         messages = state["messages"]
@@ -171,7 +188,7 @@ Always start your answer with "Bello"
         
         return "Couldn't find the answer you were looking for"
     
-    async def get_stream_response(self, question: str, session_id: str, user_id: Optional[str] = None, db: Optional[Session] = None) -> str:
+    async def get_stream_response(self, question: str, session_id: str, user_id: Optional[str] = None, db: Optional[Session] = None) -> AsyncGenerator[str, None]:
         
         if self.graph is None:
             self.graph = await self._build_graph()
@@ -196,17 +213,18 @@ Always start your answer with "Bello"
                     if chunk.tool_call_id:
                         full_tool_call = tool_call_details[chunk.tool_call_id]
                         full_tool_call['result'] = chunk.content
-                        yield '9:{{"toolCallId":"{id}", "toolName":"{name}", "args":{args}, "result":{result}}}\n'.format(
-                            id=full_tool_call["id"], 
+                        yield 'a:{{"toolCallId":"{id}", "toolName":"{name}", "args":{args}, "result":{result}}}\n'.format(
                             name=full_tool_call["name"], 
-                            args=full_tool_call["arguments"], 
-                            result=json.dumps(full_tool_call["result"]))
+                            id=full_tool_call["id"], 
+                            result=json.dumps(full_tool_call["result"]),
+                            args=json.dumps(full_tool_call["arguments"])
+                        )
                         
                 elif chunk.type == "AIMessageChunk":
                     if chunk.response_metadata:
                         if chunk.response_metadata['finish_reason'] == "stop":
                             yield 'e:{{"finishReason":"{reason}","isContinued":false}}\n'.format(reason="stop")
-                            return                        
+                            continue # REMARK: keep a return here instead of continue fucked me up, GeneratorExit on the langsmith traces                        
                         if chunk.response_metadata['finish_reason'] == 'tool_calls':
                             for tool_call in draft_tool_calls:
                                 tool_call_details[tool_call['id']] = tool_call
@@ -230,14 +248,30 @@ Always start your answer with "Bello"
                                     {"id": id, "name": name, "arguments": ""}
                                 )
                     else:
-                        print(chunk.content)
                         # await asyncio.sleep(1)
                         yield '0:{text}\n'.format(text=json.dumps(chunk.content))
                         
         except Exception as e:
             print(f"Error: {e}")
             yield 'd:Error: {e}\n'.format(e=e)
+    
+    async def get_session_history(self, session_id: str, user_id: str) -> List[BaseMessage]:
+        if self.graph is None:
+            self.graph = await self._build_graph()
         
+        try:
+            state: StateSnapshot = await sync_to_async(self.graph.get_state)(
+                config = {"configurable": {"thread_id": f"{user_id}_{session_id}"}}
+            )
+            
+            messages = state.values['messages']
+            processed_messages = process_messagse_aisdk(messages)
+            return processed_messages
+        except Exception as e:
+            print(f"Error: {e}")
+            return []
+    
+    
 
 async def main():
     db = SessionLocal()

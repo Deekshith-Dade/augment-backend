@@ -14,7 +14,7 @@ def encode_image(image_path):
     image_data = get_file_from_s3(image_path)
     return base64.b64encode(image_data).decode("utf-8")
 
-def get_image_description(image_path):
+def get_image_description(image_path, full_content):
     base64_image = encode_image(image_path)
     completion =  client.chat.completions.create(
         model="gpt-4.1",
@@ -22,7 +22,7 @@ def get_image_description(image_path):
             {
                 "role": "user",
                 "content": [
-                    { "type": "text", "text": "Write a short description of the image, name if you identify someone or any objects from the image try to capture the essence of what the image is aobut." },
+                    { "type": "text", "text": f"Write a short description of the image, name if you identify someone or any objects from the image try to capture the essence of what the image is aobut. The user uploaded this image with respect to the following context: {full_content}" },
                     {
                         "type": "image_url",
                         "image_url": {

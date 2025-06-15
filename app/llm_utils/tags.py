@@ -30,12 +30,23 @@ Do not generate the tag "thoughts/thought".
 Do your best job of genrating tags and a title based on the information provided. 
 """
 
+SYSTEM_PROMPT_TITLE = """
+You are an helpful assistant that generates a title based on the text.
+
+The given text is a user's thought from text, audio and/or image.
+So your task is to generate a title that represents the information provided that helps the user understand and organize.
+
+"""
+
 class Tag(BaseModel):
     name: str = Field(description="The name of the tag that represents the information in the text")
 
 class TagsAndTitle(BaseModel):
     tags: list[Tag] = Field(description="The tags that represent the information in the text")
     title: str = Field(description="The title that represents the information in the text")
+
+class Title(BaseModel):
+    title: str = Field(description="The title of the chat session that represents the information in the text")
 
 def generate_tags_and_title(text: str, tags: list[Tag]) -> tuple[str, list[str]]:
     prompt = ChatPromptTemplate.from_messages([
@@ -48,6 +59,21 @@ def generate_tags_and_title(text: str, tags: list[Tag]) -> tuple[str, list[str]]
 
     result = chain.invoke({"text": text, "tags": tags})
     return result.title, [tag.name for tag in result.tags]
+
+
+def generate_title(text: str) -> str:
+    try:
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", SYSTEM_PROMPT_TITLE),
+            ("user", "{text}")
+        ])
+        structured_llm = llm.with_structured_output(Title)
+        chain = prompt | structured_llm
+        result = chain.invoke({"text": text})
+        return result.title
+    except Exception as e:
+        print(f"Error generating title: {e}")
+        return "Untitled"
 
 if __name__ == "__main__":
     text = "I've been reading and thinking a lot about roman dyansty and it's collapse these days. I'm not sure what to think about it."

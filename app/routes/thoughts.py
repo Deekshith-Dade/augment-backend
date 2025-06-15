@@ -8,11 +8,11 @@ from app.models.models import Thought, Tag
 
 from app.schemas.schemas import  ThoughtResponse, VisualizeThought, VisualizeThoughtResponse, ThoughtResponseFull   
 
-from app.database.database import SessionLocal
+from app.database.database import get_db
 
-from app.embeddings.embeddings import embed_text_openai
-from app.embeddings.image_utils import get_image_description
-from app.embeddings.audio_utils import get_audio_transcript
+from app.llm_utils.embeddings.embeddings import embed_text_openai
+from app.llm_utils.embeddings.image_utils import get_image_description
+from app.llm_utils.embeddings.audio_utils import get_audio_transcript
 from app.database.tags import assign_tags_to_thought
 
 from app.utils.aws_utils import upload_file_to_s3, generate_presigned_url
@@ -23,13 +23,6 @@ from sklearn.cluster import KMeans
 import umap
 
 router = APIRouter(prefix="/thoughts", tags=["thoughts"])
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 user_id = "83172f77-5d45-4ec2-ac7e-13e3d0f26504"
 
@@ -55,7 +48,7 @@ async def create_thought(
         if image:
             image_bytes = await image.read()
             image_url = upload_file_to_s3(f"{file_path}/image.png", image_bytes)
-            image_description = get_image_description(f"{file_path}/image.png")
+            image_description = get_image_description(f"{file_path}/image.png", full_content)
             print(f"Image description: {image_description}")
             full_content += f"\n\nImage: {image_description}"
         
@@ -66,7 +59,7 @@ async def create_thought(
             print(f"Audio description: {audio_description}")
             full_content += f"\n\nAudio: {audio_description}"
             
-        embedding = embed_text_openai(full_content)
+        embedding = await embed_text_openai(full_content)
         
         tags = db.query(Tag).filter(Tag.user_id == user_id).all()
         title, tags = generate_tags_and_title(full_content, tags)
@@ -138,6 +131,7 @@ async def get_thought(thought_id: str, db: Session = Depends(get_db)):
     
     if not thought:
         raise HTTPException(status_code=404, detail="Thought not found")
+    
     print(thought.image_url)
     return ThoughtResponseFull(
         id = str(thought.id),
@@ -173,9 +167,10 @@ async def update_thought(
         if image:
             image_bytes = await image.read()
             image_url = upload_file_to_s3(f"{file_path}/image.png", image_bytes)
-            image_description = get_image_description(f"{file_path}/image.png")
+            image_description = get_image_description(f"{file_path}/image.png", full_content)
             print(f"Image description: {image_description}")
             full_content += f"\n\nImage: {image_description}"
+            thought.image_url = image_url
             
         if audio:
             audio_bytes = await audio.read()
@@ -183,16 +178,18 @@ async def update_thought(
             audio_description = get_audio_transcript(f"{file_path}/audio.mp3")
             print(f"Audio description: {audio_description}")
             full_content += f"\n\nAudio: {audio_description}"
+            thought.audio_url = audio_url
             
         thought.full_content = full_content
         
-        embedding = embed_text_openai(full_content)
+        embedding = await embed_text_openai(full_content)
         thought.embedding = embedding
         
         tags = db.query(Tag).filter(Tag.user_id == user_id).all()
         _, tags = generate_tags_and_title(full_content, tags)
         
-        thought.title = title    
+        thought.title = title
+            
         
         assign_tags_to_thought(db, user_id, thought.id, tags)
         
@@ -203,7 +200,6 @@ async def update_thought(
         raise HTTPException(status_code=500, detail=str(e))
     
     return ThoughtResponse(id=str(thought.id), created_at=str(thought.created_at))
-
 
 @router.delete("/{thought_id}")
 async def delete_thought(thought_id: str, db: Session = Depends(get_db)):

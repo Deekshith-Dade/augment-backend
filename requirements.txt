@@ -5,6 +5,8 @@ asyncio
 sqlalchemy
 alembic
 psycopg2-binary
+asyncpg
+greenlet
 pgvector
 
 python-multipart
@@ -30,3 +32,6 @@ scikit-learn
 plotly
 pandas
 hdbscan
+
+newspaper3k
+lxml-html-clean
