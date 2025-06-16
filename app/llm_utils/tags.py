@@ -47,6 +47,9 @@ class TagsAndTitle(BaseModel):
 
 class Title(BaseModel):
     title: str = Field(description="The title of the chat session that represents the information in the text")
+    
+class ArticleTags(BaseModel):
+    tags: list[Tag] = Field(description="The tags that represent the article")
 
 def generate_tags_and_title(text: str, tags: list[Tag]) -> tuple[str, list[str]]:
     prompt = ChatPromptTemplate.from_messages([
@@ -81,3 +84,23 @@ if __name__ == "__main__":
     tags, title = generate_tags_and_title(text, tags)
     print(tags)
     print(title)
+
+
+SYSTEM_PROMPT_ARTICLE_TAGS = """
+You are an helpful assistant that generates tags based on the article.
+
+The given text is an article.
+So your task is to generate tags that represent the information in the article.
+The tags should be of the style you see in news articles and technical blogs.
+For example: Neuroscience, Technology, Politics, etc. Generate at most 3 tags.
+"""
+
+def generate_article_tags(text: str) -> list[str]:
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", SYSTEM_PROMPT_ARTICLE_TAGS),
+        ("user", "{text}")
+    ])
+    structured_llm = llm.with_structured_output(ArticleTags)
+    chain = prompt | structured_llm
+    result = chain.invoke({"text": text})
+    return [tag.name for tag in result.tags]

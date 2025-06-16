@@ -11,7 +11,7 @@ from langchain_openai import ChatOpenAI
 
 from app.llm_utils.tags import generate_title
 from app.llm_utils.agents.thought_agent.thought_agent import ReactAgent
-from app.llm_utils.agents.thought_agent.tools import fetch_relevant_thoughts, get_thought_details
+from app.llm_utils.agents.thought_agent.tools import fetch_relevant_thoughts, get_thought_details, web_search_tool
 from app.schemas.schemas import ChatSessionResponse
 from app.models.models import ChatSession
 
@@ -24,7 +24,8 @@ user_id = "83172f77-5d45-4ec2-ac7e-13e3d0f26504"
 
 tools = [
     fetch_relevant_thoughts,
-    get_thought_details
+    get_thought_details,
+    web_search_tool
 ]
 agent = ReactAgent(llm=llm, tools=tools)
 

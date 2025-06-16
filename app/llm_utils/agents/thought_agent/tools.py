@@ -7,6 +7,7 @@ from sqlalchemy import text, select
 from app.llm_utils.embeddings.embeddings import embed_text_openai
 from app.models.models import Thought
 from app.utils.ext_articles import to_pgvector
+from langchain_tavily import TavilySearch
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -47,7 +48,7 @@ async def get_similar_thoughts(query_embedding, user_id, top_k=5, session=None):
 
 
 
-
+web_search_tool = TavilySearch(max_results=5, topic="general")
 
 @tool
 async def fetch_relevant_thoughts(query: str, config: RunnableConfig) -> str:

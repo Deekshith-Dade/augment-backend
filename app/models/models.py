@@ -70,6 +70,7 @@ class ExternalAritcle(Base):
     embedding = Column(Vector(1536), nullable=False)
     authors = Column(ARRAY(String), nullable=True)
     text = Column(Text, nullable=False)
+    tags = Column(ARRAY(String), nullable=True)
     excerpt = Column(String, nullable=True)
     source = Column(String, nullable=True)
     top_image_url = Column(String, nullable=True)

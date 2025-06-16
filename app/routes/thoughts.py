@@ -117,7 +117,7 @@ async def get_clustered_thoughts(db: Session = Depends(get_db), n_components: in
         response.append(VisualizeThought(
             id = str(thought.id),
             title = thought.title,
-            excerpt = thought.text_content[:200] + "..." if len(thought.text_content) > 200 else thought.text_content,
+            excerpt = thought.text_content,
             created_at = str(thought.created_at),
             position = reduced[i].tolist(),
             label = labels[i]

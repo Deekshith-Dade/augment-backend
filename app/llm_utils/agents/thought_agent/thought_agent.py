@@ -5,6 +5,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".
 
 import asyncio
 import json
+from datetime import datetime
 from typing import TypedDict, Annotated, List, Dict, Any, operator, Optional, AsyncGenerator
 from langgraph.graph import StateGraph, END, START
 from langgraph.graph.state import CompiledStateGraph
@@ -17,7 +18,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from asgiref.sync import sync_to_async
 from langgraph.types import StateSnapshot
 
-from app.llm_utils.agents.thought_agent.tools import fetch_relevant_thoughts, get_thought_details
+from app.llm_utils.agents.thought_agent.tools import fetch_relevant_thoughts, get_thought_details, web_search_tool
 from app.utils.messages import process_messagse_aisdk
 
 from dotenv import load_dotenv
@@ -141,10 +142,13 @@ You can use these tools to answer the question.
 
 ALWAYS, If you are using a thought, you should cite it in the format [Number](thought://thought_id), I can use this info to make user experience better.
 For example if the thought's title is "The future of AI" and the id is "23523523fadgadgasedga" and another thought's id is "23523523fadgadgasedga", you should cite it as [1](thought://23523523fadgadgasedga) and [2](thought://23523523fadgadgasedga).
+
+The time is {time}
+
 Always start your answer with "Bello"
 """
 
-        full_messages = self._prepare_messages(system_message, messages)
+        full_messages = self._prepare_messages(system_message.format(time=datetime.now().strftime("%Y-%m-%d %H:%M:%S")), messages)
         try:
             response = await self.llm_with_tools.ainvoke(full_messages)
         except Exception as e:
@@ -279,7 +283,8 @@ async def main():
     try:
         tools = [
             fetch_relevant_thoughts,
-            get_thought_details
+            get_thought_details,
+            web_search_tool
         ]
         
         llm = ChatOpenAI(model="gpt-4o", temperature=0)
