@@ -8,21 +8,19 @@ from app.models.models import ExternalAritcle, Thought
 from app.llm_utils.tags import generate_article_tags
 import numpy as np
 from sqlalchemy import select
+from app.routes.utils import get_current_user
+from app.models.models import User
 
-
-
-user_id = "83172f77-5d45-4ec2-ac7e-13e3d0f26504"
 
 router = APIRouter(prefix="/articles", tags=["articles"])
 
 @router.post("/embed")
-async def embed_article(payload: dict, db: AsyncSession = Depends(get_async_db)):
+async def embed_article(payload: dict, db: AsyncSession = Depends(get_async_db), user: User = Depends(get_current_user)):
     try:
         url = payload["url"]
         article = scrape_article(url)
         
         text = article["text"]
-        print(f"Text length: {len(text)}")
         embedding = await embed_text_openai(text)
         tags = generate_article_tags(text)
         
@@ -52,8 +50,7 @@ async def embed_article(payload: dict, db: AsyncSession = Depends(get_async_db))
 
 
 @router.get("/search")
-async def search_articles(query: str, top_k: int = 5, db: AsyncSession = Depends(get_async_db)):
-    print(query)
+async def search_articles(query: str, top_k: int = 5, db: AsyncSession = Depends(get_async_db), user: User = Depends(get_current_user)):
     try:
         query_embedding = await embed_text_openai(query)
         sql = text("""
@@ -81,9 +78,9 @@ async def search_articles(query: str, top_k: int = 5, db: AsyncSession = Depends
 
 @router.get("/discover")
 async def discover_articles(db: AsyncSession = Depends(get_async_db), limit: int = Query(10, ge=1, le=50),
-    offset: int = Query(0, ge=0)):
+    offset: int = Query(0, ge=0), user: User = Depends(get_current_user)):
     try:
-        thoughts = await db.execute(select(Thought.embedding).where(Thought.user_id == user_id))
+        thoughts = await db.execute(select(Thought.embedding).where(Thought.user_id == user.id))
         embeddings = [row[0] for row in thoughts.fetchall()]
         if not embeddings:
             return []

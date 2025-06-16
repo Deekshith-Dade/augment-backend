@@ -10,7 +10,12 @@ from sqlalchemy.orm import relationship
 class User(Base):
     __tablename__ = "users"
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=lambda: uuid.uuid4())
+    external_id = Column(String, nullable=True, unique=True, index=True)
     email = Column(String, nullable=False, unique=True, index=True)
+    name = Column(String, nullable=True)
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
+    profile_image_url = Column(String, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), default=datetime.now(timezone.utc))
     
     thoughts = relationship("Thought", back_populates="user")

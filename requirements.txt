@@ -1,6 +1,9 @@
 fastapi
 uvicorn
 
+cryptography
+pyjwt
+
 asyncio
 sqlalchemy
 alembic

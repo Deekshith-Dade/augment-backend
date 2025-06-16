@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 
-from app.models.models import Thought, Tag
+from app.models.models import Thought, Tag, User
 
 from app.schemas.schemas import  ThoughtResponse, VisualizeThought, VisualizeThoughtResponse, ThoughtResponseFull   
 
@@ -17,14 +17,14 @@ from app.database.tags import assign_tags_to_thought
 
 from app.utils.aws_utils import upload_file_to_s3, generate_presigned_url
 from app.llm_utils.tags import generate_tags_and_title
+from app.routes.utils import get_current_user
 
 import numpy as np
 from sklearn.cluster import KMeans
 import umap
+import random
 
 router = APIRouter(prefix="/thoughts", tags=["thoughts"])
-
-user_id = "83172f77-5d45-4ec2-ac7e-13e3d0f26504"
 
 @router.post("/create", response_model=ThoughtResponse)
 async def create_thought(
@@ -32,10 +32,11 @@ async def create_thought(
     image: Optional[UploadFile] = File(None),
     audio: Optional[UploadFile] = File(None),
     metadata: Optional[str] = Form(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
 ):
     thought_id = str(uuid.uuid4())
-    
+    user_id = user.id
     file_path = f"user_{user_id}/thoughts/{thought_id}"
     image_url = None
     audio_url = None
@@ -96,11 +97,27 @@ async def create_thought(
 
 
 @router.get("/visualize", response_model=VisualizeThoughtResponse)
-async def get_clustered_thoughts(db: Session = Depends(get_db), n_components: int = 3, n_clusters: int = 5):
+async def get_clustered_thoughts(db: Session = Depends(get_db), n_components: int = 3, n_clusters: int = 5, user: User = Depends(get_current_user)):
+    user_id = user.id
+    print(f"User ID: {user_id}")
+    
     thoughts = db.query(Thought).filter(Thought.user_id == user_id).all()
     
     if not thoughts:
         raise HTTPException(status_code=404, detail="No thoughts found")
+    
+    if len(thoughts) <  5:
+        response = []
+        for i, thought in enumerate(thoughts):
+            response.append(VisualizeThought(
+                id = str(thought.id),
+                title = thought.title,
+                excerpt = thought.text_content,
+                created_at = str(thought.created_at),
+                position = [random.random() * 2, random.random() * 2, random.random() * 2],
+                label = i
+            ))
+        return VisualizeThoughtResponse(thoughts=response)
     
     embeddings = np.array([t.embedding for t in thoughts])
     
@@ -126,7 +143,8 @@ async def get_clustered_thoughts(db: Session = Depends(get_db), n_components: in
     return VisualizeThoughtResponse(thoughts=response)
     
 @router.get("/{thought_id}", response_model=ThoughtResponseFull)
-async def get_thought(thought_id: str, db: Session = Depends(get_db)):
+async def get_thought(thought_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    user_id = user.id
     thought = db.query(Thought).filter(Thought.id == thought_id, Thought.user_id == user_id).first()
     
     if not thought:
@@ -151,8 +169,10 @@ async def update_thought(
     text_content: str = Form(...),
     image: Optional[UploadFile] = File(None),
     audio: Optional[UploadFile] = File(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
 ):
+    user_id = user.id
     thought = db.query(Thought).filter(Thought.id == thought_id, Thought.user_id == user_id).first()
     
     if not thought:
@@ -202,7 +222,8 @@ async def update_thought(
     return ThoughtResponse(id=str(thought.id), created_at=str(thought.created_at))
 
 @router.delete("/{thought_id}")
-async def delete_thought(thought_id: str, db: Session = Depends(get_db)):
+async def delete_thought(thought_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    user_id = user.id
     thought = db.query(Thought).filter(Thought.id == thought_id, Thought.user_id == user_id).first()
     
     if not thought:
