@@ -1,8 +1,7 @@
 import base64
 from openai import OpenAI
 from dotenv import load_dotenv
-import boto3
-import os
+
 from app.utils.aws_utils import get_file_from_s3
 load_dotenv()
 

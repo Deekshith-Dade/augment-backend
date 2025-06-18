@@ -83,7 +83,7 @@ async def discover_articles(db: AsyncSession = Depends(get_async_db), limit: int
         thoughts = await db.execute(select(Thought.embedding).where(Thought.user_id == user.id))
         embeddings = [row[0] for row in thoughts.fetchall()]
         if not embeddings:
-            return []
+            return {"articles": []}
         user_vector = np.mean(np.array(embeddings), axis=0)
         sql = text("""
             SELECT id, title, text, authors, top_image_url, tags, url, published_at, embedding <#> (:embedding)::vector AS distance

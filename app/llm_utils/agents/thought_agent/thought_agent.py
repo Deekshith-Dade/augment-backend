@@ -196,7 +196,7 @@ Always start your answer with "Bello"
         
         if self.graph is None:
             self.graph = await self._build_graph()
-            
+        
         initial_state = {
             "messages": [HumanMessage(content=question)]
         }

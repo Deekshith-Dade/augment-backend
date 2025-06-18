@@ -1,14 +1,18 @@
 fastapi
 uvicorn
+rich
 
 cryptography
 pyjwt
+svix
 
 asyncio
+asgiref
 sqlalchemy
 alembic
-psycopg2-binary
-asyncpg
+psycopg[binary]
+
+
 greenlet
 pgvector
 
@@ -17,8 +21,6 @@ python-multipart
 python-dotenv
 
 openai
-open-clip-torch
-torch
 Pillow
 boto3
 
@@ -28,13 +30,13 @@ langchain-openai
 langchain-core
 pydantic
 langgraph-checkpoint-postgres
+langchain_tavily
 
 python-slugify
 umap-learn
 scikit-learn
 plotly
 pandas
-hdbscan
 
 newspaper3k
 lxml-html-clean

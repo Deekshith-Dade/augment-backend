@@ -1,81 +1,64 @@
 from fastapi import APIRouter, HTTPException, Request, Depends
+from sqlalchemy.orm import Session
 from app.models.models import User
 from app.database.database import get_db
-from sqlalchemy.orm import Session
-import hmac
-import hashlib
+from svix.webhooks import Webhook, WebhookVerificationError
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
-CLERK_WEBHOOK_SECRET = os.getenv("CLERK_WEBHOOK_SECRET")
-print("secret", CLERK_WEBHOOK_SECRET)
 
-def verify_clerk_webhook(request: Request, raw_body: bytes):
-    signature = request.headers.get("clerk-signature")
-    
-    if not signature:
-        raise HTTPException(status_code=400, detail="Missing clerk-signature")
-    
-    try:
-        expected_signature = hmac.new(
-            CLERK_WEBHOOK_SECRET.encode("utf-8"),
-            msg=raw_body,
-            digestmod=hashlib.sha256
-        ).hexdigest()
-        
-        if not hmac.compare_digest(signature, expected_signature):
-            raise HTTPException(status_code=400, detail="Invalid clerk-signature")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
+WEBHOOK_SECRET = os.getenv("CLERK_WEBHOOK_SECRET")
+if not WEBHOOK_SECRET:
+    raise RuntimeError("Missing CLERK_WEBHOOK_SIGNING_SECRET in environment")
 
 @router.post("/clerk_auth")
 async def clerk_auth(request: Request, db: Session = Depends(get_db)):
     raw_body = await request.body()
+    headers = {
+        "svix-id": request.headers.get("svix-id", ""),
+        "svix-timestamp": request.headers.get("svix-timestamp", ""),
+        "svix-signature": request.headers.get("svix-signature", ""),
+    }
     
-    # verify_clerk_webhook_signature(request, raw_body)
-    
-    body = await request.json()
-    
-    event_type = body.get("type")
-    data = body.get("data", {})
-    external_id = data.get("id")
+    try:
+        verified = Webhook(WEBHOOK_SECRET).verify(raw_body, headers)
+    except WebhookVerificationError:
+        raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
+    data = verified["data"]
+    event_type = verified["type"]
+    external_id = data.get("id")
     if not external_id:
         raise HTTPException(status_code=400, detail="Missing Clerk user ID")
 
+    # Process events
     if event_type in ("user.created", "user.updated"):
-        email = data.get("email_addresses", [{}])[0].get("email_address")
-        first_name = data.get("first_name") or ""
-        last_name = data.get("last_name") or ""
-        profile_image_url = data.get("image_url") or ""
-        name = f"{first_name} {last_name}".strip() or email
+        email = data.get("email_addresses", [{}])[0].get("email_address", "")
+        first = data.get("first_name", "") or ""
+        last = data.get("last_name", "") or ""
+        name = f"{first} {last}".strip() or email
+        profile_image_url = data.get("image_url", "")
 
         user = db.query(User).filter_by(external_id=external_id).first()
-        if user:
-            # Update existing user
-            user.email = email
-            user.name = name
-            user.profile_image_url = profile_image_url
-            user.first_name = first_name
-            user.last_name = last_name
-        else:
-            # Create new user
+        if not user:
             user = User(
                 external_id=external_id,
                 email=email,
                 name=name,
+                first_name=first,
+                last_name=last,
                 profile_image_url=profile_image_url,
-                first_name=first_name,
-                last_name=last_name
             )
             db.add(user)
-
+        else:
+            user.email = email
+            user.name = name
+            user.first_name = first
+            user.last_name = last
+            user.profile_image_url = profile_image_url
         db.commit()
-        return {"message": f"User {event_type.replace('user.', '')} successfully"}
+
+        return {"message": f"User {event_type} synced successfully"}
 
     elif event_type == "user.deleted":
         user = db.query(User).filter_by(external_id=external_id).first()
@@ -84,4 +67,4 @@ async def clerk_auth(request: Request, db: Session = Depends(get_db)):
             db.commit()
         return {"message": "User deleted successfully"}
 
-    return {"message": f"Unhandled event type: {event_type}"}
+    return {"message": f"Ignored unsupported event type: {event_type}"}

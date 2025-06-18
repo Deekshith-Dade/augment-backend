@@ -106,9 +106,10 @@ async def chat(request: Request, db: AsyncSession = Depends(get_async_db), user:
                 yield f"8:{json.dumps(data)}\n"
                 async for chunk in agent.get_stream_response(question, session.id, user.id, db):
                     yield chunk
+                    
             except Exception as e:
                 print(e)
-                yield f"3:{json.dumps("error")}\n"
+                yield f"3:{json.dumps('error')}\n"
         response = StreamingResponse(stream_response(), media_type="text/event-stream")
         response.headers['x-vercel-ai-data-stream'] = 'v1'
         return response

@@ -74,6 +74,7 @@ def get_current_user(
         raise HTTPException(status_code=401, detail=str(e))
     
     user = db.query(User).filter(User.external_id == clerk_user_id).first()
+    
     if not user:
         # Extract user data from JWT payload
         email = payload.get("email", "")

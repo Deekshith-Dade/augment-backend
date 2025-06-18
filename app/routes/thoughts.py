@@ -50,25 +50,18 @@ async def create_thought(
             image_bytes = await image.read()
             image_url = upload_file_to_s3(f"{file_path}/image.png", image_bytes)
             image_description = get_image_description(f"{file_path}/image.png", full_content)
-            print(f"Image description: {image_description}")
             full_content += f"\n\nImage: {image_description}"
         
         if audio:
             audio_bytes = await audio.read()
             audio_url = upload_file_to_s3(f"{file_path}/audio.mp3", audio_bytes)
             audio_description = get_audio_transcript(f"{file_path}/audio.mp3")
-            print(f"Audio description: {audio_description}")
             full_content += f"\n\nAudio: {audio_description}"
             
         embedding = await embed_text_openai(full_content)
         
         tags = db.query(Tag).filter(Tag.user_id == user_id).all()
         title, tags = generate_tags_and_title(full_content, tags)
-        print(f"Title: {title}")
-        print(f"Tags: {tags}")
-        
-    
-        print(f"Embedding: {len(embedding)}")
         
         new_thought = Thought(
             id = thought_id,
@@ -99,7 +92,6 @@ async def create_thought(
 @router.get("/visualize", response_model=VisualizeThoughtResponse)
 async def get_clustered_thoughts(db: Session = Depends(get_db), n_components: int = 3, n_clusters: int = 5, user: User = Depends(get_current_user)):
     user_id = user.id
-    print(f"User ID: {user_id}")
     
     thoughts = db.query(Thought).filter(Thought.user_id == user_id).all()
     
@@ -150,7 +142,6 @@ async def get_thought(thought_id: str, db: Session = Depends(get_db), user: User
     if not thought:
         raise HTTPException(status_code=404, detail="Thought not found")
     
-    print(thought.image_url)
     return ThoughtResponseFull(
         id = str(thought.id),
         title = thought.title,
@@ -188,7 +179,6 @@ async def update_thought(
             image_bytes = await image.read()
             image_url = upload_file_to_s3(f"{file_path}/image.png", image_bytes)
             image_description = get_image_description(f"{file_path}/image.png", full_content)
-            print(f"Image description: {image_description}")
             full_content += f"\n\nImage: {image_description}"
             thought.image_url = image_url
             
@@ -196,7 +186,6 @@ async def update_thought(
             audio_bytes = await audio.read()
             audio_url = upload_file_to_s3(f"{file_path}/audio.mp3", audio_bytes)
             audio_description = get_audio_transcript(f"{file_path}/audio.mp3")
-            print(f"Audio description: {audio_description}")
             full_content += f"\n\nAudio: {audio_description}"
             thought.audio_url = audio_url
             
@@ -216,7 +205,6 @@ async def update_thought(
         db.commit()
         db.refresh(thought)
     except Exception as e:
-        print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     
     return ThoughtResponse(id=str(thought.id), created_at=str(thought.created_at))

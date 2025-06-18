@@ -1,11 +1,8 @@
-import torch
-import open_clip
-from PIL import Image
-from openai import OpenAI, AsyncOpenAI
+from openai import AsyncOpenAI
 from typing import List
 
 from dotenv import load_dotenv
-import os
+
 load_dotenv()
 
 client = AsyncOpenAI()
