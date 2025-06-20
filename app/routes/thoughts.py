@@ -23,6 +23,7 @@ import numpy as np
 from sklearn.cluster import KMeans
 import umap
 import random
+import re
 
 router = APIRouter(prefix="/thoughts", tags=["thoughts"])
 
@@ -44,19 +45,19 @@ async def create_thought(
     
     try:
         if text:
-            full_content += f"Thought: {text}"
+            full_content += f"<Thought>: {text} </Thought>"
         
         if image:
             image_bytes = await image.read()
             image_url = upload_file_to_s3(f"{file_path}/image.png", image_bytes)
             image_description = get_image_description(f"{file_path}/image.png", full_content)
-            full_content += f"\n\nImage: {image_description}"
+            full_content += f"\n\n<Image>: {image_description} </Image>"
         
         if audio:
             audio_bytes = await audio.read()
             audio_url = upload_file_to_s3(f"{file_path}/audio.mp3", audio_bytes)
             audio_description = get_audio_transcript(f"{file_path}/audio.mp3")
-            full_content += f"\n\nAudio: {audio_description}"
+            full_content += f"\n\n<Audio>: {audio_description} </Audio>"
             
         embedding = await embed_text_openai(full_content)
         
@@ -168,50 +169,64 @@ async def update_thought(
 ):
     user_id = user.id
     thought = db.query(Thought).filter(Thought.id == thought_id, Thought.user_id == user_id).first()
-    
+
     if not thought:
         raise HTTPException(status_code=404, detail="Thought not found")
-    
+
     try:
         file_path = f"user_{user_id}/thoughts/{thought_id}"
-    
-        thought.title = title
-        thought.text_content = text_content
-        full_content = f"Thought: {text_content}"
+        pre_full_content = thought.full_content or ""
+
+        # Replace or add <Thought>
+        if re.search(r"<Thought>.*?</Thought>", pre_full_content, re.DOTALL):
+            full_content = re.sub(r"<Thought>.*?</Thought>", f"<Thought>{text_content}</Thought>", pre_full_content, flags=re.DOTALL)
+        else:
+            full_content = pre_full_content + f"\n\n<Thought>{text_content}</Thought>"
+
+        # Handle image
         if image:
             image_bytes = await image.read()
             image_url = upload_file_to_s3(f"{file_path}/image.png", image_bytes)
             image_description = get_image_description(f"{file_path}/image.png", full_content)
-            full_content += f"\n\nImage: {image_description}"
+
+            if re.search(r"<Image>.*?</Image>", full_content, re.DOTALL):
+                full_content = re.sub(r"<Image>.*?</Image>", f"<Image>{image_description}</Image>", full_content, flags=re.DOTALL)
+            else:
+                full_content += f"\n\n<Image>{image_description}</Image>"
+
             thought.image_url = image_url
-            
+
+        # Handle audio
         if audio:
             audio_bytes = await audio.read()
             audio_url = upload_file_to_s3(f"{file_path}/audio.mp3", audio_bytes)
             audio_description = get_audio_transcript(f"{file_path}/audio.mp3")
-            full_content += f"\n\nAudio: {audio_description}"
+
+            if re.search(r"<Audio>.*?</Audio>", full_content, re.DOTALL):
+                full_content = re.sub(r"<Audio>.*?</Audio>", f"<Audio>{audio_description}</Audio>", full_content, flags=re.DOTALL)
+            else:
+                full_content += f"\n\n<Audio>{audio_description}</Audio>"
+
             thought.audio_url = audio_url
-            
+
+        # Update thought
+        thought.title = title
+        thought.text_content = text_content
         thought.full_content = full_content
-        
-        embedding = await embed_text_openai(full_content)
-        thought.embedding = embedding
-        
+        thought.embedding = await embed_text_openai(full_content)
+
+        # Tag generation and assignment
         tags = db.query(Tag).filter(Tag.user_id == user_id).all()
         _, tags = generate_tags_and_title(full_content, tags)
-        
-        thought.title = title
-            
-        
         assign_tags_to_thought(db, user_id, thought.id, tags)
-        
+
         db.commit()
         db.refresh(thought)
+
+        return ThoughtResponse(id=str(thought.id), created_at=str(thought.created_at))
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
-    return ThoughtResponse(id=str(thought.id), created_at=str(thought.created_at))
-
 @router.delete("/{thought_id}")
 async def delete_thought(thought_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     user_id = user.id
