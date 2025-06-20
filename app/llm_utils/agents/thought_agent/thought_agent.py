@@ -139,13 +139,7 @@ Think step by step and use tools when necessary to provide accurate answers.
 If you don't need any tools, provide a direct answer.
 You can use these tools to answer the question.
 
-
-ALWAYS, If you are using a thought, you should cite it in the format [Number](thought://thought_id), I can use this info to make user experience better.
-For example if the thought's title is "The future of AI" and the id is "23523523fadgadgasedga" and another thought's id is "23523523fadgadgasedga", you should cite it as [1](thought://23523523fadgadgasedga) and [2](thought://23523523fadgadgasedga).
-
 The time is {time}
-
-Always start your answer with "Bello"
 """
 
         full_messages = self._prepare_messages(system_message.format(time=datetime.now().strftime("%Y-%m-%d %H:%M:%S")), messages)

@@ -15,7 +15,7 @@ from app.models.models import User
 router = APIRouter(prefix="/articles", tags=["articles"])
 
 @router.post("/embed")
-async def embed_article(payload: dict, db: AsyncSession = Depends(get_async_db), user: User = Depends(get_current_user)):
+async def embed_article(payload: dict, db: AsyncSession = Depends(get_async_db)):
     try:
         url = payload["url"]
         article = scrape_article(url)
@@ -94,6 +94,7 @@ async def discover_articles(db: AsyncSession = Depends(get_async_db), limit: int
         """)
         results = await db.execute(sql, {"embedding": to_pgvector(user_vector), "limit": limit, "offset": offset})
         results = results.all()
+        
         articles = []
         for row in results:
             articles.append({

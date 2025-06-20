@@ -1,3 +1,5 @@
 pgvector extension for postgres embeddings
 
 create extension if not exists vector;
+
+ANALYZE thoughts;

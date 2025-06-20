@@ -114,10 +114,13 @@ async def get_clustered_thoughts(db: Session = Depends(get_db), n_components: in
     embeddings = np.array([t.embedding for t in thoughts])
     
     # UMAP Dimensionality Reduction
-    reducer = umap.UMAP(n_components=n_components, random_state=42)
+    desired_n_neighbors = max(10, int(len(embeddings) * 0.05))
+    n_neighbors = min(len(embeddings) - 1, desired_n_neighbors)
+    print(f"n_neighbors: {n_neighbors}")
+    reducer = umap.UMAP(n_components=n_components, n_neighbors=n_neighbors, n_jobs=1)
     reduced = reducer.fit_transform(embeddings)
     
-    kemans = KMeans(n_clusters=n_clusters, random_state=42)
+    kemans = KMeans(n_clusters=n_clusters)
     labels = kemans.fit_predict(reduced)
     
     # Create response
