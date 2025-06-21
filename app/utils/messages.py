@@ -29,7 +29,7 @@ def process_messagse_aisdk(messages: List[BaseMessage]) -> List[Dict]:
                     tool_call_index = 0
                     for tool_call_id, tool_call in tool_parts.items():
                         parts.append({
-                            "type": "tool_invocation",
+                            "type": "tool-invocation",
                             "toolInvocation": {
                                 "state": "result",
                                 "step": tool_call_index,
