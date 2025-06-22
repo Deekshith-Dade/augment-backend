@@ -68,6 +68,8 @@ async def delete_session(request: Request, session_id: str, db: AsyncSession = D
 @limiter.limit(rate_limits["RATE_LIMIT_SESSION_HISTORY"][0])
 async def get_session_history(request: Request, session_id: str, db: AsyncSession = Depends(get_async_db), user: User = Depends(get_current_user)):
     logger.info("get_session_history_request", user_id=user.id, session_id=session_id)
+    if not session_id:
+        raise HTTPException(status_code=400, detail="Session ID is required")
     try:
         stmt = select(ChatSession).where(ChatSession.id == session_id, ChatSession.user_id == user.id)
         session = await db.execute(stmt)
@@ -78,7 +80,7 @@ async def get_session_history(request: Request, session_id: str, db: AsyncSessio
         logger.info("get_session_history_request_return", user_id=user.id, session_id=session_id)
         return messages
     except Exception as e:
-        logger.error("get_session_history_request_error", user_id=user.id, error=str(e))
+        logger.error("get_session_history_request_error", user_id=user.id, session_id=session_id, error=str(e))
         return HTTPException(status_code=500, detail="Internal server error")
 
 
