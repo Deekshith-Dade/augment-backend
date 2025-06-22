@@ -3,3 +3,16 @@ pgvector extension for postgres embeddings
 create extension if not exists vector;
 
 ANALYZE thoughts;
+
+
+
+Environment Settings
+
+log details
+Environment = dev
+LOG_LEVEL="DEBUG"
+LOG_FORMAT="console"
+
+Environment= prod
+LOG_LEVEL="WARNING"
+LOG_FORMAT=json

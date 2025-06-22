@@ -1,7 +1,7 @@
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
 from sqlalchemy.orm import Session
 
 from app.models.models import Thought, Tag, User
@@ -18,17 +18,20 @@ from app.database.tags import assign_tags_to_thought
 from app.utils.aws_utils import upload_file_to_s3, generate_presigned_url
 from app.llm_utils.tags import generate_tags_and_title
 from app.routes.utils import get_current_user
-
+from app.core.logging import logger
 import numpy as np
 from sklearn.cluster import KMeans
 import umap
 import random
 import re
+from app.core.limiter import limiter, rate_limits
 
 router = APIRouter(prefix="/thoughts", tags=["thoughts"])
 
 @router.post("/create", response_model=ThoughtResponse)
+@limiter.limit(rate_limits["RATE_LIMIT_THOUGHTS_CREATE"][0])
 async def create_thought(
+    request: Request,
     text: Optional[str] = Form(None),
     image: Optional[UploadFile] = File(None),
     audio: Optional[UploadFile] = File(None),
@@ -36,6 +39,7 @@ async def create_thought(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
+    logger.info("create_thought_request", user_id=user.id)
     thought_id = str(uuid.uuid4())
     user_id = user.id
     file_path = f"user_{user_id}/thoughts/{thought_id}"
@@ -46,24 +50,25 @@ async def create_thought(
     try:
         if text:
             full_content += f"<Thought>: {text} </Thought>"
-        
+        logger.info("create_thought_request_text", user_id=user.id)
         if image:
             image_bytes = await image.read()
             image_url = upload_file_to_s3(f"{file_path}/image.png", image_bytes)
             image_description = get_image_description(f"{file_path}/image.png", full_content)
             full_content += f"\n\n<Image>: {image_description} </Image>"
+            logger.info("create_thought_request_image", user_id=user.id, image_url=image_url)
         
         if audio:
             audio_bytes = await audio.read()
             audio_url = upload_file_to_s3(f"{file_path}/audio.mp3", audio_bytes)
             audio_description = get_audio_transcript(f"{file_path}/audio.mp3")
             full_content += f"\n\n<Audio>: {audio_description} </Audio>"
-            
+            logger.info("create_thought_request_audio", user_id=user.id, audio_url=audio_url)
         embedding = await embed_text_openai(full_content)
-        
+        logger.info("create_thought_request_embedding", user_id=user.id, len_embedding=len(embedding))
         tags = db.query(Tag).filter(Tag.user_id == user_id).all()
         title, tags = generate_tags_and_title(full_content, tags)
-        
+        logger.info("create_thought_request_tags", user_id=user.id)
         new_thought = Thought(
             id = thought_id,
             user_id = user_id,
@@ -75,31 +80,69 @@ async def create_thought(
             full_content = full_content,
             meta = metadata
         )
-        
+        logger.info("create_thought_request_new_thought", user_id=user.id)
         db.add(new_thought)
         db.flush()
         
         assign_tags_to_thought(db, user_id, new_thought.id, tags)
-        
+        logger.info("create_thought_request_assign_tags", user_id=user.id)
         db.commit()
         db.refresh(new_thought)
+        logger.info("create_thought_request_commit", user_id=user.id)
     except Exception as e:
-        print(f"Error: {e}")
+        logger.error("create_thought_request_error", user_id=user.id, error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
     
+    logger.info("create_thought_request_return", user_id=user.id, thought_id=thought_id)
     return ThoughtResponse(id=thought_id, created_at=str(new_thought.created_at))
 
 
 @router.get("/visualize", response_model=VisualizeThoughtResponse)
-async def get_clustered_thoughts(db: Session = Depends(get_db), n_components: int = 3, n_clusters: int = 5, user: User = Depends(get_current_user)):
+@limiter.limit(rate_limits["RATE_LIMIT_THOUGHTS_READ"][0])
+async def get_clustered_thoughts(
+    request: Request,
+    db: Session = Depends(get_db), 
+    n_components: int = 3, 
+    n_clusters: int = 5, 
+    user: User = Depends(get_current_user)
+):
+    logger.info("get_clustered_thoughts_request",  user_id=user.id)
     user_id = user.id
-    
-    thoughts = db.query(Thought).filter(Thought.user_id == user_id).all()
-    
-    if not thoughts:
-        raise HTTPException(status_code=404, detail="No thoughts found")
-    
-    if len(thoughts) <  5:
+    try:
+        thoughts = db.query(Thought).filter(Thought.user_id == user_id).all()
+        logger.info("get_clustered_thoughts_request_thoughts", user_id=user.id, len_thoughts=len(thoughts))
+        if not thoughts:
+            logger.error("get_clustered_thoughts_request_no_thoughts", user_id=user.id)
+            raise HTTPException(status_code=404, detail="No thoughts found")
+        
+        if len(thoughts) <  5:
+            logger.info("get_clustered_thoughts_request_less_than_5_thoughts", user_id=user.id)
+            response = []
+            for i, thought in enumerate(thoughts):
+                response.append(VisualizeThought(
+                    id = str(thought.id),
+                    title = thought.title,
+                    excerpt = thought.text_content,
+                    created_at = str(thought.created_at),
+                    position = [random.random() * 2, random.random() * 2, random.random() * 2],
+                    label = i
+                ))
+            logger.info("get_clustered_thoughts_request_return", user_id=user.id)
+            return VisualizeThoughtResponse(thoughts=response)
+        
+        embeddings = np.array([t.embedding for t in thoughts])
+        
+        # UMAP Dimensionality Reduction
+        desired_n_neighbors = max(10, int(len(embeddings) * 0.05))
+        n_neighbors = min(len(embeddings) - 1, desired_n_neighbors)
+        logger.info("get_clustered_thoughts_request_n_neighbors", user_id=user.id, n_neighbors=n_neighbors)
+        reducer = umap.UMAP(n_components=n_components, n_neighbors=n_neighbors, n_jobs=1)
+        reduced = reducer.fit_transform(embeddings)
+        
+        kemans = KMeans(n_clusters=n_clusters)
+        labels = kemans.fit_predict(reduced)
+        logger.info("get_clustered_thoughts_request_labels", user_id=user.id)
+        # Create response
         response = []
         for i, thought in enumerate(thoughts):
             response.append(VisualizeThought(
@@ -107,45 +150,28 @@ async def get_clustered_thoughts(db: Session = Depends(get_db), n_components: in
                 title = thought.title,
                 excerpt = thought.text_content,
                 created_at = str(thought.created_at),
-                position = [random.random() * 2, random.random() * 2, random.random() * 2],
-                label = i
+                position = reduced[i].tolist(),
+                label = labels[i]
             ))
-        return VisualizeThoughtResponse(thoughts=response)
-    
-    embeddings = np.array([t.embedding for t in thoughts])
-    
-    # UMAP Dimensionality Reduction
-    desired_n_neighbors = max(10, int(len(embeddings) * 0.05))
-    n_neighbors = min(len(embeddings) - 1, desired_n_neighbors)
-    print(f"n_neighbors: {n_neighbors}")
-    reducer = umap.UMAP(n_components=n_components, n_neighbors=n_neighbors, n_jobs=1)
-    reduced = reducer.fit_transform(embeddings)
-    
-    kemans = KMeans(n_clusters=n_clusters)
-    labels = kemans.fit_predict(reduced)
-    
-    # Create response
-    response = []
-    for i, thought in enumerate(thoughts):
-        response.append(VisualizeThought(
-            id = str(thought.id),
-            title = thought.title,
-            excerpt = thought.text_content,
-            created_at = str(thought.created_at),
-            position = reduced[i].tolist(),
-            label = labels[i]
-        ))
-    
+    except Exception as e:
+        logger.error("get_clustered_thoughts_request_error", user_id=user.id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+            
+    logger.info("get_clustered_thoughts_request_return", user_id=user.id)
     return VisualizeThoughtResponse(thoughts=response)
     
 @router.get("/{thought_id}", response_model=ThoughtResponseFull)
-async def get_thought(thought_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+@limiter.limit(rate_limits["RATE_LIMIT_THOUGHTS_READ"][0])
+async def get_thought(request: Request, thought_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    logger.info("get_thought_request", user_id=user.id, thought_id=thought_id)
     user_id = user.id
     thought = db.query(Thought).filter(Thought.id == thought_id, Thought.user_id == user_id).first()
-    
+    logger.info("get_thought_request_thought", user_id=user.id)
     if not thought:
+        logger.error("get_thought_request_thought_not_found", user_id=user.id, thought_id=thought_id)
         raise HTTPException(status_code=404, detail="Thought not found")
-    
+
+    logger.info("get_thought_request_return", user_id=user.id)
     return ThoughtResponseFull(
         id = str(thought.id),
         title = thought.title,
@@ -158,7 +184,9 @@ async def get_thought(thought_id: str, db: Session = Depends(get_db), user: User
     )
     
 @router.put("/{thought_id}", response_model=ThoughtResponse)
+@limiter.limit(rate_limits["RATE_LIMIT_THOUGHTS_UPDATE"][0])
 async def update_thought(
+    request: Request,
     thought_id: str,
     title: str = Form(...),
     text_content: str = Form(...),
@@ -167,13 +195,16 @@ async def update_thought(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
+    logger.info("update_thought_request", user_id=user.id, thought_id=thought_id)
     user_id = user.id
     thought = db.query(Thought).filter(Thought.id == thought_id, Thought.user_id == user_id).first()
 
     if not thought:
+        logger.error("update_thought_request_thought_not_found", user_id=user.id, thought_id=thought_id)
         raise HTTPException(status_code=404, detail="Thought not found")
 
     try:
+        logger.info("update_thought_request_thought_found", user_id=user.id, thought_id=thought_id)
         file_path = f"user_{user_id}/thoughts/{thought_id}"
         pre_full_content = thought.full_content or ""
 
@@ -222,19 +253,30 @@ async def update_thought(
 
         db.commit()
         db.refresh(thought)
-
+        logger.info("update_thought_request_return", user_id=user.id, thought_id=thought_id)
         return ThoughtResponse(id=str(thought.id), created_at=str(thought.created_at))
 
     except Exception as e:
+        logger.error("update_thought_request_error", user_id=user.id, error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.delete("/{thought_id}")
-async def delete_thought(thought_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    user_id = user.id
-    thought = db.query(Thought).filter(Thought.id == thought_id, Thought.user_id == user_id).first()
-    
-    if not thought:
-        raise HTTPException(status_code=404, detail="Thought not found")
-        
-    db.delete(thought)
-    db.commit()
-    return {"message": "Thought deleted successfully"}
+@limiter.limit(rate_limits["RATE_LIMIT_THOUGHTS_DELETE"][0])
+async def delete_thought(request: Request, thought_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    logger.info("delete_thought_request", user_id=user.id, thought_id=thought_id)
+    try:
+        user_id = user.id
+        thought = db.query(Thought).filter(Thought.id == thought_id, Thought.user_id == user_id).first()
+        logger.info("delete_thought_request_thought", user_id=user.id)
+        if not thought:
+            logger.error("delete_thought_request_thought_not_found", user_id=user.id, thought_id=thought_id)
+            raise HTTPException(status_code=404, detail="Thought not found")
+            
+        db.delete(thought)
+        db.commit()
+        logger.info("delete_thought_request_return", user_id=user.id, thought_id=thought_id)
+        return {"message": "Thought deleted successfully"}
+    except Exception as e:
+        logger.error("delete_thought_request_error", user_id=user.id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
