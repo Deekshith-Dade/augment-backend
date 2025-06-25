@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request
 from contextlib import asynccontextmanager
-from app.routes import thoughts, chat, articles, webhooks
+from app.routes import thoughts, chat, articles, webhooks, flow
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.logging import logger
 from app.core.limiter import limiter, rate_limits
@@ -18,6 +18,8 @@ app.include_router(thoughts.router)
 app.include_router(chat.router)
 app.include_router(articles.router)
 app.include_router(webhooks.router)
+app.include_router(flow.router)
+
 
 
 
